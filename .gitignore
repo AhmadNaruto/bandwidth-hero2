@@ -2,3 +2,7 @@
 node_modules
 .env
 yarn-error.log
+*.md
+
+# Local Netlify folder
+.netlify
