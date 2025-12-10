@@ -1,0 +1,23 @@
+{
+  "name": "bandwidth-hero-function",
+  "version": "1.0.0",
+  "description": "Netlify function for bandwidth-hero image compression service",
+  "main": "index.js",
+  "dependencies": {
+    "sharp": "^0.33.5",
+    "node-fetch": "^2.7.0"
+  },
+  "scripts": {
+    "postinstall": "npm rebuild sharp",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "netlify",
+    "function",
+    "image",
+    "compression",
+    "sharp"
+  ],
+  "author": "Bandwidth Hero",
+  "license": "MIT"
+}

@@ -1,5 +1,5 @@
 const { handler } = require("../functions/index");
-const pick = require("../util/pick");
+const pick = require("../functions/pick");
 const { test, expect } = require("@jest/globals");
 
 test("handler returns correct response when no url query parameter is provided", async () => {

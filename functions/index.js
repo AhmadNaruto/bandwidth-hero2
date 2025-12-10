@@ -1,12 +1,12 @@
-// index.js - VERSI LENGKAP & BENAR
+// index.js - OPTIMIZED VERSION
 const pick = require("./pick");
 const fetch = require("node-fetch");
 const shouldCompress = require("./shouldCompress");
 const compress = require("./compress");
 
 // Konstanta Global
-const DEFAULT_QUALITY = 70;
-const MAX_IMAGE_SIZE = 25 * 1024 * 1024; // 25MB
+const DEFAULT_QUALITY = 40; // Default quality changed to 40% to match project documentation
+const MAX_IMAGE_SIZE = 25 * 1024 * 1024; // 25MB max size to prevent memory issues
 
 // Header No-Cache untuk memastikan real-time
 const NO_CACHE_HEADERS = {
@@ -59,11 +59,51 @@ exports.handler = async (event) => {
   });
 
   try {
+    // First, fetch only headers to check content type and size before downloading full image
     // --- PENGGUNAAN AWAIT PERTAMA (FETCH) AMAN KARENA DI DALAM ASYNC HANDLER ---
+    const headResponse = await fetch(imageUrl, {
+      method: 'HEAD',
+      headers: {
+        ...pick(event.headers, [
+          "cookie", "dnt", "referer", "user-agent", "accept",
+          "accept-language", "accept-encoding"
+        ]),
+        "x-forwarded-for": event.headers["x-forwarded-for"] || event.ip,
+      },
+      timeout: 10000,
+    });
+
+    if (!headResponse.ok) {
+      console.error(`-> HEAD REQUEST FAILED: ${imageUrl}`, {
+        status: headResponse.status,
+        statusText: headResponse.statusText
+      });
+    }
+
+    const contentLength = headResponse.headers.get('content-length');
+    const contentType = headResponse.headers.get('content-type') || '';
+
+    // Check if content type is an image before downloading
+    if (!contentType.startsWith('image/')) {
+      return {
+        statusCode: 400,
+        body: `Invalid content type: ${contentType}. Only image types are supported.`,
+      };
+    }
+
+    // Check if the size is within limits before downloading the full image
+    if (contentLength && parseInt(contentLength) > MAX_IMAGE_SIZE) {
+      return {
+        statusCode: 400,
+        body: `Image too large: ${(contentLength / 1024 / 1024).toFixed(2)} MB. Maximum allowed: 25 MB.`,
+      };
+    }
+
+    // Now fetch the full image
     const response = await fetch(imageUrl, {
       headers: {
         ...pick(event.headers, [
-          "cookie", "dnt", "referer", "user-agent", "accept", 
+          "cookie", "dnt", "referer", "user-agent", "accept",
           "accept-language", "accept-encoding"
         ]),
         "x-forwarded-for": event.headers["x-forwarded-for"] || event.ip,
@@ -73,7 +113,7 @@ exports.handler = async (event) => {
 
     if (!response.ok) {
       console.error(`-> FETCH FAILED: ${imageUrl}`, {
-        status: response.status, 
+        status: response.status,
         statusText: response.statusText
       });
       return {
@@ -82,18 +122,34 @@ exports.handler = async (event) => {
       };
     }
 
-    // ... (Logika penanganan dan filtering headers)
+    // Optimized header filtering - create a Set for faster lookups
+    const excludedHeaders = new Set([
+      'content-encoding',
+      'content-length',
+      'transfer-encoding',
+      'connection',
+      'x-original-size',
+      'x-bytes-saved'
+    ]);
+
     const responseHeaders = {};
     for (const [key, value] of response.headers.entries()) {
         const lowerKey = key.toLowerCase();
-        if (!['content-encoding', 'content-length', 'transfer-encoding', 'connection', 'x-original-size', 'x-bytes-saved'].includes(lowerKey)) {
+        if (!excludedHeaders.has(lowerKey)) {
             responseHeaders[lowerKey] = value;
         }
     }
 
     const imageData = await response.buffer();
     const originalSize = imageData.length;
-    const contentType = responseHeaders["content-type"] || "";
+
+    // Secondary validation after download in case content-length was not provided in HEAD request
+    if (originalSize > MAX_IMAGE_SIZE) {
+      return {
+        statusCode: 400,
+        body: `Image too large after download: ${(originalSize / 1024 / 1024).toFixed(2)} MB. Maximum allowed: 25 MB.`,
+      };
+    }
 
     // Log 4: IMAGE INFO
     console.log("-> IMAGE INFO", {
