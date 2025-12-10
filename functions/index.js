@@ -1,30 +1,14 @@
-// index.js - OPTIMIZED VERSION
-const pick = require("./pick");
-const fetch = require("node-fetch");
-const shouldCompress = require("./shouldCompress");
-const compress = require("./compress");
-
-// Konstanta Global
-const DEFAULT_QUALITY = 40; // Default quality changed to 40% to match project documentation
-const MAX_IMAGE_SIZE = 25 * 1024 * 1024; // 25MB max size to prevent memory issues
-
-// Header No-Cache untuk memastikan real-time
-const NO_CACHE_HEADERS = {
-    "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
-    "Pragma": "no-cache",
-    "Expires": "0"
-};
-
-// --- DEFINISI HANDLER UTAMA (HARUS MENGGUNAKAN ASYNC) ---
+/**
+ * HANDLER UTAMA
+ * Fungsi utama yang menangani permintaan kompresi gambar
+ */
 exports.handler = async (event) => {
-  const handlerStartTime = process.hrtime(); 
-
+  const handlerStartTime = process.hrtime();
   const { url } = event.queryStringParameters || {};
   const { jpeg, bw, l } = event.queryStringParameters || {};
 
-  // Log 1: REQUEST START
   console.log("--- START REQUEST ---", {
-    url, 
+    url,
     ip: event.headers["x-forwarded-for"] || event.ip,
     userAgent: event.headers["user-agent"]
   });
@@ -43,6 +27,7 @@ exports.handler = async (event) => {
   if (Array.isArray(imageUrl)) {
     imageUrl = imageUrl.join("&url=");
   }
+
   imageUrl = imageUrl.replace(/http:\/\/1\.1\.\d\.\d\/bmi\/(https?:\/\/)?/i, "http://");
 
   const useWebp = !jpeg;
@@ -50,7 +35,6 @@ exports.handler = async (event) => {
   const quality = parseInt(l, 10) || DEFAULT_QUALITY;
   const validQuality = Math.min(100, Math.max(0, quality));
 
-  // Log 2: PARAMETER INPUT
   console.log("-> PARAMS", {
     targetURL: imageUrl,
     outputFormat: useWebp ? 'webp' : 'jpeg',
@@ -58,9 +42,15 @@ exports.handler = async (event) => {
     quality: validQuality
   });
 
+  // ========== PERUBAHAN: Deklarasikan timeout di scope fungsi ==========
+  let timeoutId = null;
+  let compressionTimeoutId = null;
+
   try {
-    // First, fetch only headers to check content type and size before downloading full image
-    // --- PENGGUNAAN AWAIT PERTAMA (FETCH) AMAN KARENA DI DALAM ASYNC HANDLER ---
+    // Pra-validasi dengan permintaan HEAD
+    const controller = new AbortController();
+    timeoutId = setTimeout(() => controller.abort(), 45000); // Set timeoutId
+
     const headResponse = await fetch(imageUrl, {
       method: 'HEAD',
       headers: {
@@ -70,6 +60,7 @@ exports.handler = async (event) => {
         ]),
         "x-forwarded-for": event.headers["x-forwarded-for"] || event.ip,
       },
+      signal: controller.signal,
       timeout: 10000,
     });
 
@@ -83,23 +74,23 @@ exports.handler = async (event) => {
     const contentLength = headResponse.headers.get('content-length');
     const contentType = headResponse.headers.get('content-type') || '';
 
-    // Check if content type is an image before downloading
     if (!contentType.startsWith('image/')) {
+      clearTimeout(timeoutId);
       return {
         statusCode: 400,
         body: `Invalid content type: ${contentType}. Only image types are supported.`,
       };
     }
 
-    // Check if the size is within limits before downloading the full image
     if (contentLength && parseInt(contentLength) > MAX_IMAGE_SIZE) {
+      clearTimeout(timeoutId);
       return {
         statusCode: 400,
         body: `Image too large: ${(contentLength / 1024 / 1024).toFixed(2)} MB. Maximum allowed: 25 MB.`,
       };
     }
 
-    // Now fetch the full image
+    // Unduh gambar lengkap
     const response = await fetch(imageUrl, {
       headers: {
         ...pick(event.headers, [
@@ -108,6 +99,7 @@ exports.handler = async (event) => {
         ]),
         "x-forwarded-for": event.headers["x-forwarded-for"] || event.ip,
       },
+      signal: controller.signal,
       timeout: 30000,
     });
 
@@ -116,13 +108,14 @@ exports.handler = async (event) => {
         status: response.status,
         statusText: response.statusText
       });
+      clearTimeout(timeoutId);
       return {
         statusCode: response.status || 500,
         body: `Failed to fetch image: ${response.statusText}`,
       };
     }
 
-    // Optimized header filtering - create a Set for faster lookups
+    // Filter header yang tidak perlu
     const excludedHeaders = new Set([
       'content-encoding',
       'content-length',
@@ -134,35 +127,44 @@ exports.handler = async (event) => {
 
     const responseHeaders = {};
     for (const [key, value] of response.headers.entries()) {
-        const lowerKey = key.toLowerCase();
-        if (!excludedHeaders.has(lowerKey)) {
-            responseHeaders[lowerKey] = value;
-        }
+      const lowerKey = key.toLowerCase();
+      if (!excludedHeaders.has(lowerKey)) {
+        responseHeaders[lowerKey] = value;
+      }
     }
 
     const imageData = await response.buffer();
     const originalSize = imageData.length;
 
-    // Secondary validation after download in case content-length was not provided in HEAD request
+    if (controller.signal.aborted) {
+      console.log("Request cancelled during image download");
+      clearTimeout(timeoutId);
+      return {
+        statusCode: 499,
+        body: "Request cancelled by client"
+      };
+    }
+
     if (originalSize > MAX_IMAGE_SIZE) {
+      clearTimeout(timeoutId);
       return {
         statusCode: 400,
         body: `Image too large after download: ${(originalSize / 1024 / 1024).toFixed(2)} MB. Maximum allowed: 25 MB.`,
       };
     }
 
-    // Log 4: IMAGE INFO
     console.log("-> IMAGE INFO", {
       contentType,
       originalSize: `${originalSize} bytes`
     });
 
+    // Periksa apakah gambar perlu dikompres
     if (!shouldCompress(contentType, originalSize, useWebp)) {
-      // Log 5: BYPASS
       const totalDuration = process.hrtime(handlerStartTime);
       const totalDurationMs = (totalDuration[0] * 1000) + (totalDuration[1] / 1000000);
       console.log(`--- BYPASS SUCCESS --- Total Duration: ${totalDurationMs.toFixed(2)}ms`);
 
+      clearTimeout(timeoutId);
       return {
         statusCode: 200,
         body: imageData.toString("base64"),
@@ -176,7 +178,12 @@ exports.handler = async (event) => {
       };
     }
 
-    // Apply image compression
+    clearTimeout(timeoutId);
+
+    // Lakukan kompresi gambar
+    const compressionController = new AbortController();
+    compressionTimeoutId = setTimeout(() => compressionController.abort(), 30000);
+
     const { err, output, headers: compressionHeaders, durationMs, fallbackApplied } = await compress(
       imageData,
       useWebp,
@@ -185,22 +192,41 @@ exports.handler = async (event) => {
       originalSize
     );
 
+    clearTimeout(compressionTimeoutId);
+
+    // Jika kompresi error, redirect ke gambar asli
     if (err) {
-      console.error("-> COMPRESSION FAILED", {
-        url: imageUrl, 
+      console.error("-> COMPRESSION FAILED - REDIRECTING TO ORIGINAL", {
+        url: imageUrl,
         error: err.message || err.toString()
       });
+      
+      const totalDuration = process.hrtime(handlerStartTime);
+      const totalDurationMs = (totalDuration[0] * 1000) + (totalDuration[1] / 1000000);
+      
+      console.log("--- REDIRECT TO ORIGINAL ---", {
+        reason: err.message,
+        totalDuration: `${totalDurationMs.toFixed(2)}ms`
+      });
+      
       return {
-        statusCode: 500,
-        body: "Compression failed"
+        statusCode: 302,
+        headers: {
+          "Location": imageUrl,
+          "Cache-Control": "no-store, no-cache, must-revalidate",
+          "Pragma": "no-cache",
+          "Expires": "0",
+          "X-Redirect-Reason": err.message.replace(/[^a-zA-Z0-9 ]/g, '_')
+        },
+        body: ""
       };
     }
 
+    // Hitung statistik jika kompresi berhasil
     const savingsPercent = ((originalSize - output.length) / originalSize) * 100;
     const totalDuration = process.hrtime(handlerStartTime);
     const totalDurationMs = (totalDuration[0] * 1000) + (totalDuration[1] / 1000000);
 
-    // Log 7: COMPRESSION SUCCESS
     console.log("--- COMPRESSION SUCCESS ---", {
       original: `${originalSize} bytes`,
       compressed: `${output.length} bytes`,
@@ -222,10 +248,44 @@ exports.handler = async (event) => {
       },
     };
   } catch (error) {
+    // ========== PERUBAHAN: Gunakan variabel yang sudah dideklarasikan ==========
+    // Bersihkan timeout jika sudah diatur
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+    if (compressionTimeoutId) {
+      clearTimeout(compressionTimeoutId);
+    }
+
+    if (error.name === 'AbortError' || error.message.includes('abort') || error.type === 'aborted') {
+      console.log("Request cancelled or timed out");
+      return {
+        statusCode: 499,
+        body: "Request cancelled by client or timed out"
+      };
+    }
+
     console.error("--- HANDLER ERROR ---", {
       message: error.message || "Unknown error",
       stack: error.stack
     });
+    
+    // Redirect ke gambar asli jika error umum
+    if (imageUrl) {
+      console.log("-> UNHANDLED ERROR - REDIRECTING TO ORIGINAL:", error.message);
+      return {
+        statusCode: 302,
+        headers: {
+          "Location": imageUrl,
+          "Cache-Control": "no-store, no-cache, must-revalidate",
+          "Pragma": "no-cache",
+          "Expires": "0",
+          "X-Redirect-Reason": "unhandled_error"
+        },
+        body: ""
+      };
+    }
+    
     return {
       statusCode: 500,
       body: error.message || "Internal server error"

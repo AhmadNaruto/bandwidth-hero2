@@ -3,8 +3,9 @@
   "version": "1.0.0",
   "description": "Netlify function for bandwidth-hero image compression service",
   "main": "index.js",
+  "type": "commonjs",
   "dependencies": {
-    "sharp": "^0.33.5",
+    "sharp": "^0.34.5",
     "node-fetch": "^2.7.0"
   },
   "scripts": {

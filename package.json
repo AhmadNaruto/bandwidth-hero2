@@ -3,15 +3,16 @@
   "version": "1.0.1",
   "description": "Data compression service that converts images to low-res WebP or JPEG on the fly. Used in Bandwidth-Hero browser extension.",
   "license": "MIT",
+  "type": "commonjs",
   "scripts": {
     "start": "ntl dev",
     "test": "jest"
   },
   "dependencies": {
     "node-fetch": "^2.7.0",
-    "sharp": "^0.33.5"
+    "sharp": "^0.34.5"
   },
   "devDependencies": {
-    "jest": "^29.7.0"
+    "jest": "^30.0.0-alpha.3"
   }
 }
