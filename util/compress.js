@@ -1,32 +1,34 @@
-// Compresses an image using Sharp library
+// compress.js yang Dioptimalisasi
 const sharp = require("sharp");
 
-/**
- * Compresses an image buffer using Sharp
- * @param {Buffer} imageData - The image buffer to compress
- * @param {boolean} useWebp - Whether to use WebP format
- * @param {boolean} grayscale - Whether to apply grayscale filter
- * @param {number} quality - Compression quality (0-100)
- * @param {number} originalSize - Original size of the image
- * @returns {Promise} - Resolves with compressed data and headers or error
- */
 async function compress(imageData, useWebp, grayscale, quality, originalSize) {
   const format = useWebp ? "webp" : "jpeg";
+  // Default kualitas 70 untuk penghematan bandwidth yang lebih baik
+  const finalQuality = Math.min(100, Math.max(1, quality || 70)); 
 
   try {
     const sharpInstance = sharp(imageData);
 
-    // Apply grayscale if requested
+    // --- Optimalisasi Utama: Resize ke 480p (Max 854x854) ---
+    const MAX_DIMENSION = 854;
+
+    sharpInstance.resize({
+        width: MAX_DIMENSION,
+        height: MAX_DIMENSION,
+        fit: 'inside', 
+        withoutEnlargement: true // Penting untuk menjaga gambar kecil
+    });
+    // -----------------------------------------------------------
+
     if (grayscale) {
       sharpInstance.grayscale();
     }
 
-    // Apply format and quality settings
     const result = await sharpInstance
       .toFormat(format, {
-        quality,
-        progressive: true,
-        optimizeScans: true
+        quality: finalQuality,
+        progressive: format === 'jpeg', // Hanya untuk JPEG
+        optimizeScans: format === 'jpeg' 
       })
       .toBuffer({ resolveWithObject: true });
 
@@ -39,6 +41,7 @@ async function compress(imageData, useWebp, grayscale, quality, originalSize) {
         "content-length": info.size,
         "x-original-size": originalSize,
         "x-bytes-saved": originalSize - info.size,
+        // Hapus header Cache-Control seperti permintaan Anda (Real-time)
       },
       output: data,
     };

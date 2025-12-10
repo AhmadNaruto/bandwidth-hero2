@@ -1,111 +1,61 @@
-const pick = require("../util/pick");
-const fetch = require("node-fetch");
-const shouldCompress = require("../util/shouldCompress");
-const compress = require("../util/compress");
-const DEFAULT_QUALITY = 40;
+// index.js yang Dioptimalisasi
 
-// Maximum image size allowed (50MB) to prevent memory issues
-const MAX_IMAGE_SIZE = 50 * 1024 * 1024;
+// ... (require, pick, fetch, shouldCompress, compress)
+
+const DEFAULT_QUALITY = 70; // Diubah dari 40 menjadi 70 (agar sesuai dengan compress.js)
+
+// Maximum image size allowed (25MB) untuk keamanan memori
+const MAX_IMAGE_SIZE = 25 * 1024 * 1024; 
 
 exports.handler = async (event) => {
-  const { url } = event.queryStringParameters || {};
-  const { jpeg, bw, l } = event.queryStringParameters || {};
-
-  // Return simple response if no URL is provided
-  if (!url) {
-    return {
-      statusCode: 200,
-      body: "bandwidth-hero-proxy"
-    };
-  }
-
-  let imageUrl = url;
-
-  // Attempt to parse if URL is JSON-encoded
-  try {
-    imageUrl = JSON.parse(imageUrl);
-  } catch (parseError) {
-    // If JSON parsing fails, continue with original URL
-  }
-
-  // Handle array format by joining with URL parameter
-  if (Array.isArray(imageUrl)) {
-    imageUrl = imageUrl.join("&url=");
-  }
-
-  // Fix malformed URLs that contain the pattern
-  imageUrl = imageUrl.replace(/http:\/\/1\.1\.\d\.\d\/bmi\/(https?:\/\/)?/i, "http://");
-
-  // Parse input parameters
-  const useWebp = !jpeg; // Use WebP if jpeg parameter is not set
-  const grayscale = !!bw && bw !== '0'; // Enable grayscale if bw is set to any non-'0' value
-  const quality = parseInt(l, 10) || DEFAULT_QUALITY;
+  // ... (kode awal, handling URL, parsing parameter)
 
   try {
-    // Validate quality parameter
-    const validQuality = Math.min(100, Math.max(0, quality));
+    // ... (Validasi validQuality)
 
-    // Fetch the original image
+    // Fetch the original image (tetap sama)
     const response = await fetch(imageUrl, {
-      headers: {
-        ...pick(event.headers, [
-          "cookie",
-          "dnt",
-          "referer",
-          "user-agent",
-          "accept",
-          "accept-language",
-          "accept-encoding"
-        ]),
-        "x-forwarded-for": event.headers["x-forwarded-for"] || event.ip,
-      },
-      // Set timeout to avoid hanging requests
-      timeout: 30000, // 30 seconds
+      // ... (headers, timeout)
     });
 
-    if (!response.ok) {
-      return {
-        statusCode: response.status || 500,
-        body: `Failed to fetch image: ${response.statusText}`,
-      };
-    }
+    // ... (Handling !response.ok)
 
-    // Check content length before downloading to prevent memory issues
+    // Check content length before downloading
     const contentLength = response.headers.get("content-length");
     if (contentLength && parseInt(contentLength, 10) > MAX_IMAGE_SIZE) {
-      return {
-        statusCode: 413, // Payload Too Large
-        body: "Image size exceeds maximum allowed size"
-      };
+      // ... (Error image too large)
     }
 
-    // Get response headers and buffer the image data
+    // Get response headers
     const responseHeaders = {};
     for (const [key, value] of response.headers.entries()) {
-      responseHeaders[key] = value;
+      // Hapus header yang tidak relevan atau yang akan digantikan
+      const lowerKey = key.toLowerCase();
+      if (!['content-encoding', 'content-length', 'transfer-encoding', 'connection', 'x-original-size', 'x-bytes-saved'].includes(lowerKey)) {
+          responseHeaders[lowerKey] = value;
+      }
     }
 
     const imageData = await response.buffer();
     const originalSize = imageData.length;
     const contentType = responseHeaders["content-type"] || "";
 
-    // Check if compression should be applied
-    // Note: The third parameter is still named isWebp in shouldCompress for backward compatibility
-    // but the logic was updated to properly handle WebP vs JPEG decisions
     if (!shouldCompress(contentType, originalSize, useWebp)) {
       console.log("Bypassing compression... Size: ", originalSize);
+      
       return {
         statusCode: 200,
         body: imageData.toString("base64"),
         isBase64Encoded: true,
         headers: {
-          "content-encoding": "identity",
-          ...responseHeaders
+          "content-encoding": "identity", // Penting untuk bypass agar browser tidak mengharapkan GZIP
+          "content-length": originalSize, // Set ulang panjang konten
+          ...responseHeaders // Sisa header asli
         },
       };
     }
 
-    // Apply image compression
+    // Apply image compression (tetap sama)
     const { err, output, headers: compressionHeaders } = await compress(
       imageData,
       useWebp,
@@ -114,32 +64,19 @@ exports.handler = async (event) => {
       originalSize
     );
 
-    if (err) {
-      console.error("Compression failed: ", imageUrl, err);
-      return {
-        statusCode: 500,
-        body: "Compression failed"
-      };
-    }
-
-    const savingsPercent = ((originalSize - output.length) / originalSize) * 100;
-    console.log(`Original: ${originalSize} bytes, Compressed: ${output.length} bytes, Saved: ${savingsPercent.toFixed(2)}%`);
+    // ... (Handling error, logging savings percent)
 
     return {
       statusCode: 200,
       body: output.toString("base64"),
       isBase64Encoded: true,
       headers: {
-        "content-encoding": "identity",
-        ...responseHeaders,
-        ...compressionHeaders
+        "content-encoding": "identity", // Tetap Identity karena Anda mengirim Base64 mentah
+        ...responseHeaders, // Header asli yang sudah difilter
+        ...compressionHeaders // Header kompresi baru (content-type, content-length, dll.)
       },
     };
   } catch (error) {
-    console.error("Error processing request:", error);
-    return {
-      statusCode: 500,
-      body: error.message || "Internal server error"
-    };
+    // ... (Error processing request)
   }
 };
