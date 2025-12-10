@@ -1,9 +1,9 @@
-// compress.js - Diperbarui dengan WebP Fallback ke JPEG
+// compress.js - FINAL VERSION (Memperbaiki SyntaxError & Webtoon Resize)
 const sharp = require("sharp");
 
 // Batas tinggi maksimum untuk format WebP
 const MAX_WEBP_DIMENSION = 16383;
-// Lebar target untuk kompresi webtoon
+// Lebar target untuk kompresi webtoon (480p standard width)
 const TARGET_WIDTH = 854;
 
 /**
@@ -17,7 +17,7 @@ const TARGET_WIDTH = 854;
  */
 async function compress(imageData, useWebp, grayscale, quality, originalSize) {
   const finalQuality = Math.min(100, Math.max(1, quality || 70)); 
-  let format = useWebp ? "webp" : "jpeg"; // Format awal
+  let format = useWebp ? "webp" : "jpeg"; 
   let fallbackApplied = false;
 
   const startTime = process.hrtime(); 
@@ -25,7 +25,9 @@ async function compress(imageData, useWebp, grayscale, quality, originalSize) {
   try {
     const sharpInstance = sharp(imageData);
     
+    // --- PENTING: AWAIT DI SINI AMAN KARENA BERADA DI DALAM ASYNC FUNCTION ---
     const metadata = await sharpInstance.metadata();
+    
     const originalWidth = metadata.width;
     const originalHeight = metadata.height;
 
@@ -47,7 +49,7 @@ async function compress(imageData, useWebp, grayscale, quality, originalSize) {
         // Lakukan resize berdasarkan Lebar
         sharpInstance.resize({
             width: TARGET_WIDTH,
-            height: null, // Tinggi dihitung otomatis
+            height: null, // Tinggi dihitung otomatis (mempertahankan aspek rasio)
             withoutEnlargement: true 
         });
     }
@@ -74,7 +76,7 @@ async function compress(imageData, useWebp, grayscale, quality, originalSize) {
       err: null,
       output: data,
       durationMs,
-      fallbackApplied, // Tambahkan informasi fallback untuk logging di index.js
+      fallbackApplied,
       headers: {
         "content-type": `image/${format}`,
         "content-length": info.size,
